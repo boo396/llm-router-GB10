@@ -464,7 +464,7 @@ def create_demo():
         body_text_color="#ffffff",
     )
     
-    with gr.Blocks(title="Multimodal LLM Router Demo", theme=nvidia_theme, css="""
+    with gr.Blocks(title="I got Phi on it GB10 Demo (forked from https://github.com/NVIDIA-AI-Blueprints/llm-router)", theme=nvidia_theme, css="""
         #chatbot {
             background-color: #1a1a1a;
         }
@@ -556,11 +556,11 @@ def create_demo():
             line-height: 1.1 !important;
         }
     """) as demo:
-        gr.Markdown("# 🤖 Multimodal LLM Router Demo")
+        gr.Markdown("# I got Phi on it GB10 Demo (forked from https://github.com/NVIDIA-AI-Blueprints/llm-router)")
         gr.Markdown("⚠️ **Model switching notice**: Image requests will switch to the Phi-4 multimodal server, and text requests switch back to Phi-4 reasoning. This can take a few minutes while containers stop/start. For seamless use, consider adding another GB10 to run both models simultaneously.")
         
         chatbot = gr.Chatbot(
-            label="Chat",
+            label="I got Phi on it GB10 Demo (forked from https://github.com/NVIDIA-AI-Blueprints/llm-router)",
             height=600,
             show_label=False,
             elem_id="chatbot"
