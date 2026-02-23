@@ -112,29 +112,51 @@ def call_router(messages: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
     Returns:
         Tuple of (model_name, error_message)
     """
-    try:
-        payload = {
-            "messages": messages,
-            "stream": False
-        }
-        
-        response = requests.post(
-            ROUTER_ENDPOINT,
-            json=payload,
-            headers={
-                "accept": "application/json",
-                "Content-Type": "application/json"
-            },
-            timeout=30
-        )
-        response.raise_for_status()
-        
-        result = response.json()
-        model_name = result["choices"][0]["message"]["content"]
-        return model_name, None
-        
-    except Exception as e:
-        return None, f"Router error: {str(e)}"
+    payload = {
+        "messages": messages,
+        "stream": False
+    }
+
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                ROUTER_ENDPOINT,
+                json=payload,
+                headers={
+                    "accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                timeout=240
+            )
+            response.raise_for_status()
+
+            result = response.json()
+            model_name = result["choices"][0]["message"]["content"]
+            return model_name, None
+
+        except requests.exceptions.Timeout:
+            if attempt < 2:
+                time.sleep(10)
+                continue
+            return None, "Router error: timed out (model may be switching; wait for load to finish)."
+        except Exception as e:
+            return None, f"Router error: {str(e)}"
+
+
+def strip_images_for_text_models(messages: List[Dict]) -> List[Dict]:
+    """Remove image content from messages for text-only models to avoid token overflow."""
+    sanitized = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            text_parts = [
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            ]
+            content = " ".join(text_parts).strip() or "[image omitted]"
+        sanitized.append({**msg, "content": content})
+    return sanitized
 
 
 def call_model_azure_openai(model_config: Dict, messages: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
@@ -195,22 +217,30 @@ def call_model_openai_compatible(model_config: Dict, messages: List[Dict]) -> Tu
     Returns:
         Tuple of (response_text, error_message)
     """
-    try:
-        client = OpenAI(
-            base_url=model_config["endpoint"],
-            api_key=model_config.get("api_key") or "local"
-        )
+    client = OpenAI(
+        base_url=model_config["endpoint"],
+        api_key=model_config.get("api_key") or "local"
+    )
 
-        response = client.chat.completions.create(
-            model=model_config["name"],
-            messages=messages,
-            max_tokens=4096
-        )
+    if model_config.get("name") == "microsoft/phi-4":
+        messages = strip_images_for_text_models(messages)
 
-        return response.choices[0].message.content, None
+    for attempt in range(3):
+        try:
+            response = client.chat.completions.create(
+                model=model_config["name"],
+                messages=messages,
+                max_tokens=4096,
+                timeout=180
+            )
 
-    except Exception as e:
-        return None, f"OpenAI-compatible API error: {str(e)}"
+            return response.choices[0].message.content, None
+
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(10)
+                continue
+            return None, f"OpenAI-compatible API error: {str(e)}"
 
 
 def call_model(model_name: str, messages: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
@@ -352,7 +382,7 @@ def chat(message: str, image: Optional[str], history: List[List]) -> Tuple[List[
     
     # Limit conversation history to prevent token overflow (stricter for multimodal)
     has_image = any(isinstance(m.get("content"), list) for m in messages)
-    messages = limit_conversation_history(messages, max_exchanges=2 if has_image else 5)
+    messages = limit_conversation_history(messages, max_exchanges=2 if has_image else 3)
     
     # Step 1: Call router to determine model
     status = "🔍 Routing request..."
