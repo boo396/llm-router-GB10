@@ -2,6 +2,23 @@
 
 This cookbook recreates the local Phi-4 reasoning + Phi-4 multimodal routing setup on a single GB10. It includes the model switcher behavior and the UI warning about startup delays.
 
+## Quick Rebuild (Fast Path)
+
+If you are rebuilding after a re-image, you can run the automated bootstrap script instead of doing every step manually:
+
+```bash
+git clone https://github.com/boo396/llm-router-GB10.git
+cd llm-router-GB10
+git checkout experimental
+bash scripts/reimage_bootstrap.sh
+```
+
+After it finishes:
+
+- Edit `.env` and `demo/.env` for real API keys if needed (`OPENAI_API_KEY`, `NVIDIA_API_KEY`)
+- Start the app stack: `sudo docker compose up -d --build`
+- Open `http://<host-ip>:7860`
+
 ## 1) Prerequisites
 
 - Ubuntu/Linux host
