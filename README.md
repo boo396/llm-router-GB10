@@ -143,6 +143,8 @@ For training and using the auto-router (CLIP + Neural Network):
 
 After meeting the prerequisites, follow these steps to start a demo chat application that uses the intent based router and supports multimodal inputs:
 
+For fast recovery after a machine re-image, use the automated bootstrap path in [COOKBOOK.md](COOKBOOK.md) under **Quick Rebuild (Fast Path)**.
+
 #### 1. Configure API Keys
 
 Create a `.env` file in the project root:
