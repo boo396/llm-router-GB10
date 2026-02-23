@@ -9,6 +9,7 @@ This cookbook recreates the local Phi-4 reasoning + Phi-4 multimodal routing set
 - Docker + Docker Compose
 - NVIDIA Container Toolkit (`nvidia-container-toolkit`)
 - Git
+- Root access for Docker commands (the router uses the Docker socket to switch models)
 
 ## 2) Clone the repo
 
@@ -54,7 +55,7 @@ sudo docker run -d --name phi4-reasoning --gpus all \
 
 ## 6) Start the multimodal model (Phi-4 Multimodal)
 
-> Start this only when you need multimodal, or let the router auto-switch.
+> On a single GB10, both models cannot run concurrently. The router will auto-switch by stopping one and starting the other. For this to work, **both containers must exist**.
 
 ```bash
 sudo docker run -d --name phi4-multimodal --gpus all \
@@ -69,6 +70,12 @@ sudo docker run -d --name phi4-multimodal --gpus all \
   --gpu-memory-utilization 0.85 --enforce-eager
 ```
 
+After it finishes loading once, stop it to free GPU memory:
+
+```bash
+sudo docker stop phi4-multimodal
+```
+
 ## 7) Configure environment variables
 
 Create `.env` and `demo/.env` (do not commit):
@@ -78,7 +85,7 @@ cp demo/env_template.txt demo/.env
 cp demo/env_template.txt .env
 ```
 
-Edit both and set:
+Edit both and set (replace `192.168.1.6` with your host IP):
 
 ```
 PHI4_MULTIMODAL_ENDPOINT=http://192.168.1.6:8012/v1
@@ -92,6 +99,13 @@ LOCAL_OPENAI_API_KEY=local
 
 ```bash
 sudo docker compose up -d --build
+```
+
+Quick health checks:
+
+```bash
+curl -s http://192.168.1.6:8013/v1/models | head -c 200
+curl -s http://192.168.1.6:8012/v1/models | head -c 200
 ```
 
 Open the UI:
@@ -119,6 +133,8 @@ Tell me about this picture.
 - The router auto-switches containers and logs warnings about delay. This is expected on a single GB10.
 - For seamless routing without delays, add another GB10 so both models run concurrently.
 - Image uploads are resized/compressed to prevent token overflow.
+- Text-only prompts are routed to Phi-4 14B; any request with image/audio goes to Phi-4 multimodal.
+- If you see timeouts during switching, wait and retry after the model finishes loading.
 
 ## 11) Cleanup
 
