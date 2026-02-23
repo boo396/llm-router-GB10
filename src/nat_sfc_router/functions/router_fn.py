@@ -40,7 +40,6 @@ async def sfc_router(config: SfcRouterConfig, builder: Builder):
     """Simple Router Function"""
 
     import time
-    import json
 
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -51,14 +50,27 @@ async def sfc_router(config: SfcRouterConfig, builder: Builder):
 
     objective_fn = await builder.get_function(config.objective_fn)
 
+    def _normalize_model_result(result):
+        if isinstance(result, tuple):
+            candidate = result[0] if result else ""
+        else:
+            candidate = result
+
+        if isinstance(candidate, tuple):
+            candidate = candidate[0] if candidate else ""
+
+        return str(candidate) if candidate is not None else ""
+
     async def _response_fn(chat_request: OpenAIChatRequest) -> ChatCompletion:
         """Process SFC router request."""
 
-        try: 
-            model, probabilities = await objective_fn.acall_invoke(chat_request)
+        try:
+            result = await objective_fn.acall_invoke(chat_request)
         except Exception as e:
-            logger.warning(f"sfc router objective fn failed, trying again to see if it returns just a model insteaed of model, probabilities: {e}", exc_info=True)
-            model = await objective_fn.acall_invoke(chat_request)
+            logger.warning(f"sfc router objective fn failed, trying again: {e}", exc_info=True)
+            result = await objective_fn.acall_invoke(chat_request)
+
+        model = _normalize_model_result(result)
 
         return ChatCompletion(id="chatcmpl-" + str(int(time.time())),
                               object="chat.completion",

@@ -7,6 +7,7 @@ based on a classification made by a router endpoint.
 
 import os
 import base64
+import time
 import gradio as gr
 import requests
 from typing import List, Dict, Optional, Tuple
@@ -159,6 +160,49 @@ def strip_images_for_text_models(messages: List[Dict]) -> List[Dict]:
     return sanitized
 
 
+def _message_text_length(message: Dict) -> int:
+    """Estimate text length for context budgeting."""
+    content = message.get("content")
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        total = 0
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                total += len(item.get("text", ""))
+        return total
+    return 0
+
+
+def _trim_messages_for_context(messages: List[Dict], max_chars: int = 22000) -> List[Dict]:
+    """Trim oldest messages until request fits a conservative context budget."""
+    trimmed = list(messages)
+
+    while len(trimmed) > 1 and sum(_message_text_length(m) for m in trimmed) > max_chars:
+        trimmed.pop(0)
+
+    if sum(_message_text_length(m) for m in trimmed) > max_chars and trimmed:
+        last = dict(trimmed[-1])
+        content = last.get("content")
+        if isinstance(content, str):
+            last["content"] = content[-max_chars:]
+        elif isinstance(content, list):
+            rebuilt = []
+            budget = max_chars
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text", "")
+                    keep = text[-budget:] if budget > 0 else ""
+                    rebuilt.append({**item, "text": keep})
+                    budget = max(0, budget - len(keep))
+                else:
+                    rebuilt.append(item)
+            last["content"] = rebuilt
+        trimmed[-1] = last
+
+    return trimmed
+
+
 def call_model_azure_openai(model_config: Dict, messages: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
     """
     Call Azure OpenAI API.
@@ -225,6 +269,8 @@ def call_model_openai_compatible(model_config: Dict, messages: List[Dict]) -> Tu
     if model_config.get("name") == "microsoft/phi-4":
         messages = strip_images_for_text_models(messages)
 
+    messages = _trim_messages_for_context(messages)
+
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
@@ -237,6 +283,11 @@ def call_model_openai_compatible(model_config: Dict, messages: List[Dict]) -> Tu
             return response.choices[0].message.content, None
 
         except Exception as e:
+            err_text = str(e)
+            if "maximum context length" in err_text.lower() and attempt < 2:
+                messages = _trim_messages_for_context(messages, max_chars=12000)
+                time.sleep(1)
+                continue
             if attempt < 2:
                 time.sleep(10)
                 continue
