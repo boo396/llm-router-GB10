@@ -21,6 +21,9 @@ logging.basicConfig(level=logging.INFO)
 # Remote model configuration
 REMOTE_MODEL_URL = os.getenv("ROUTER_MODEL_URL")
 MODEL_NAME = os.getenv("ROUTER_MODEL_NAME")
+PHI4_MULTIMODAL_URL = os.getenv("PHI4_MULTIMODAL_URL")
+PHI4_REASONING_URL = os.getenv("PHI4_REASONING_URL", REMOTE_MODEL_URL)
+ENABLE_MODEL_SWITCHING = os.getenv("ENABLE_MODEL_SWITCHING", "true").lower() in {"1", "true", "yes"}
 
 # Only need tokenizer for prompt encoding (model is remote)
 tokenizer = None
@@ -48,6 +51,70 @@ def _check_remote_model():
     except Exception as e:
         logger.error(f"Remote model at {REMOTE_MODEL_URL} is not available: {e}")
         return False
+
+
+def _is_endpoint_ready(base_url: str) -> bool:
+    """Check if an OpenAI-compatible endpoint is ready."""
+    if not base_url:
+        return False
+    for path in ("/health", "/v1/models"):
+        try:
+            response = requests.get(f"{base_url}{path}", timeout=5)
+            if response.status_code == 200:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _maybe_switch_models(target: str) -> None:
+    """Start the target model container and stop the other to free GPU memory."""
+    if not ENABLE_MODEL_SWITCHING:
+        return
+
+    try:
+        import docker  # type: ignore
+    except Exception as e:
+        logger.warning(f"Model switching disabled (docker SDK unavailable): {e}")
+        return
+
+    target = target.lower()
+    desired = "phi4-multimodal" if target == "multimodal" else "phi4-reasoning"
+    other = "phi4-reasoning" if target == "multimodal" else "phi4-multimodal"
+    desired_url = PHI4_MULTIMODAL_URL if target == "multimodal" else PHI4_REASONING_URL
+
+    try:
+        client = docker.from_env()
+    except Exception as e:
+        logger.warning(f"Model switching disabled (cannot connect to docker): {e}")
+        return
+
+    def _get_container(name: str):
+        try:
+            return client.containers.get(name)
+        except Exception:
+            return None
+
+    other_container = _get_container(other)
+    desired_container = _get_container(desired)
+
+    if desired_container and desired_container.status != "running":
+        logger.warning("Switching models: starting %s (this can take a few minutes). Consider adding another GB10 for concurrency.", desired)
+        desired_container.start()
+
+    if other_container and other_container.status == "running":
+        logger.warning("Switching models: stopping %s to free GPU memory.", other)
+        try:
+            other_container.stop(timeout=180)
+        except Exception as e:
+            logger.warning(f"Failed to stop {other}: {e}")
+
+    # Wait briefly for readiness
+    if desired_url:
+        for _ in range(60):
+            if _is_endpoint_ready(desired_url):
+                return
+            time.sleep(2)
 
 # Please use our provided prompt for best performance
 TASK_INSTRUCTION = """
@@ -100,6 +167,10 @@ route_config = [
         "description": "A question that requires deep reasoning, or complex problem solving, or if the user asks for careful thinking or careful consideration",
     },
     {
+        "name": "complex_reasoning",
+        "description": "Advanced reasoning tasks such as complex logic, multi-step math, or rigorous analysis.",
+    },
+    {
         "name": "chit_chat",
         "description": "Any social chit chat, small talk, or casual conversation.",
     },
@@ -115,18 +186,39 @@ route_config = [
         "name": "image_question",
         "description": "A question that requires the assistant to see the user eg a question about their appearance, environment, scene or surroundings.",
     },
+    {
+        "name": "document_understanding",
+        "description": "OCR, reading text from images, or understanding documents and forms.",
+    },
+    {
+        "name": "chart_understanding",
+        "description": "Understanding charts, plots, tables, or diagrams from images.",
+    },
+    {
+        "name": "multi_image_analysis",
+        "description": "Comparing multiple images or summarizing multi-image content.",
+    },
+    {
+        "name": "audio_transcription",
+        "description": "Transcribing or translating audio, or answering questions about audio content.",
+    },
 ]
 
 # Pre-compute routes JSON once to avoid repeated serialization
 _ROUTES_JSON_CACHED = json.dumps(route_config, cls=PydanticEncoder)
 
 MAP_INTENT_TO_PIPELINE = {
-    "other": "nvidia/nvidia-nemotron-nano-9b-v2",
-    "chit_chat": "nvidia/nvidia-nemotron-nano-9b-v2",
-    "hard_question": "gpt-5-chat",
-    "image_understanding": "nvidia/nemotron-nano-12b-v2-vl",
-    "image_question": "nvidia/nemotron-nano-12b-v2-vl",
-    "try_again": "gpt-5-chat",
+    "other": "microsoft/phi-4",
+    "chit_chat": "microsoft/phi-4",
+    "hard_question": "microsoft/phi-4",
+    "complex_reasoning": "microsoft/phi-4",
+    "image_understanding": "microsoft/Phi-4-multimodal-instruct",
+    "image_question": "microsoft/Phi-4-multimodal-instruct",
+    "document_understanding": "microsoft/Phi-4-multimodal-instruct",
+    "chart_understanding": "microsoft/Phi-4-multimodal-instruct",
+    "multi_image_analysis": "microsoft/Phi-4-multimodal-instruct",
+    "audio_transcription": "microsoft/Phi-4-multimodal-instruct",
+    "try_again": "microsoft/phi-4",
 }
 
 # Helper function to redact images while preserving text context
@@ -141,6 +233,7 @@ def redact_images_from_conversation(conversation: List[Dict[str, Any]]) -> List[
         # If content is a list (multimodal), process it
         if isinstance(content, list):
             text_parts = []
+            saw_image = False
             
             for item in content:
                 logger.info(f"  Item: {type(item)}, {item if not isinstance(item, dict) else list(item.keys())}")
@@ -150,12 +243,16 @@ def redact_images_from_conversation(conversation: List[Dict[str, Any]]) -> List[
                         text = f"<new msg>{item_text} </msg>"
                         text_parts.append(text)
                     elif item.get("type") == "image_url":
+                        saw_image = True
                         continue
                         
             
             # Combine text parts and add image indicator if present
-            combined_text = " ".join(text_parts)
-            
+            combined_text = " ".join(text_parts).strip()
+
+            if not combined_text and saw_image:
+                combined_text = "<new msg>[image_only_message]</msg>"
+
             msg_copy["content"] = combined_text
         
         redacted.append(msg_copy)
@@ -182,7 +279,14 @@ def _parse_route_response(response: str) -> str:
     except json.JSONDecodeError:
         # Handle single quote format
         import ast
-        return ast.literal_eval(response)["route"]
+        try:
+            return ast.literal_eval(response)["route"]
+        except Exception:
+            import re
+            match = re.search(r"\{\s*\"route\"\s*:\s*\"([^\"]+)\"\s*\}", response)
+            if match:
+                return match.group(1)
+            return "other"
 
 
 
@@ -254,7 +358,7 @@ async def hf_intent_objective_fn(config: HFIntentObjectiveConfig,
                     "temperature": 0.3,
                     "top_p": 0.9,
                 },
-                timeout=30,
+                timeout=120,
             )
             response.raise_for_status()
             result = response.json()
@@ -324,8 +428,23 @@ async def hf_intent_objective_fn(config: HFIntentObjectiveConfig,
             messages_dict = []
             logger.warning("No messages received in chat request")
 
+        # If the latest message contains an image, force multimodal routing
+        has_image = False
+        if messages_dict:
+            content = messages_dict[0].get("content")
+            if isinstance(content, list):
+                has_image = any(
+                    isinstance(item, dict) and item.get("type") == "image_url"
+                    for item in content
+                )
+
         # Run model inference (blocking call in event loop)
-        user_intent = get_route_from_conversation(messages_dict)
+        if has_image:
+            _maybe_switch_models("multimodal")
+            user_intent = "image_understanding"
+        else:
+            _maybe_switch_models("reasoning")
+            user_intent = get_route_from_conversation(messages_dict)
         
         total_response_time = time.perf_counter() - response_start
 

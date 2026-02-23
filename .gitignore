@@ -1,6 +1,9 @@
 .ipynb_checkpoints/
 *.pyc
 app/.env
+.env
+demo/.env
+**/.env
 models
 src/router-controller/target/
 routers/

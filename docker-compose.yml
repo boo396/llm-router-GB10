@@ -12,11 +12,15 @@ services:
     volumes:
       # Mount configs for dynamic configuration without rebuilding
       - ./src/nat_sfc_router/configs/config.yml:/opt/dgxcbot/router/config.yml
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - CUDA_VISIBLE_DEVICES=0
       # Intent-based router configuration
-      - ROUTER_MODEL_URL=http://qwen-router:8000
-      - ROUTER_MODEL_NAME=Qwen/Qwen3-1.7B
+      - ROUTER_MODEL_URL=http://192.168.1.6:8013
+      - ROUTER_MODEL_NAME=microsoft/phi-4
+      - PHI4_MULTIMODAL_URL=http://192.168.1.6:8012
+      - PHI4_REASONING_URL=http://192.168.1.6:8013
+      - ENABLE_MODEL_SWITCHING=true
       # Neural network router configuration
       - CLIP_SERVER=grpc://clip-server:51000
     runtime: nvidia
@@ -29,9 +33,6 @@ services:
               capabilities: [gpu]
     ipc: host
     depends_on:
-      qwen-router:
-        condition: service_healthy
-        required: false
       clip-server:
         condition: service_healthy
         required: false
@@ -44,38 +45,6 @@ services:
     networks:
       - router-network
 
-  # Qwen3 1.7B used for intent-based routing
-  qwen-router:
-    image: vllm/vllm-openai:latest
-    container_name: qwen-router
-    profiles:
-      - intent  # Use 'intent' profile for intent-based routing
-    ports:
-      - "8011:8000"
-    volumes:
-      # Cache HuggingFace models locally to avoid re-downloading
-      - ~/.cache/huggingface:/root/.cache/huggingface
-      - ./qwen3_nonthinking.jinja:/app/qwen3_nonthinking.jinja
-    environment:
-      - CUDA_VISIBLE_DEVICES=0
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    ipc: host
-    command: ["--model", "Qwen/Qwen3-1.7B", "--chat-template", "/app/qwen3_nonthinking.jinja"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 120s
-    networks:
-      - router-network
 
   # CLIP Embedding Server used for neural network routing
   clip-server:
@@ -119,6 +88,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - PHI4_MULTIMODAL_ENDPOINT=http://192.168.1.6:8012/v1
+      - PHI4_REASONING_ENDPOINT=http://192.168.1.6:8013/v1
+      - LOCAL_OPENAI_API_KEY=${LOCAL_OPENAI_API_KEY}
     depends_on:
       router-backend:
         condition: service_healthy

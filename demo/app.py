@@ -23,6 +23,9 @@ ROUTER_ENDPOINT = os.getenv("ROUTER_ENDPOINT", "http://localhost:8001/sfc_router
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
+PHI4_MULTIMODAL_ENDPOINT = os.getenv("PHI4_MULTIMODAL_ENDPOINT", "http://localhost:8012/v1")
+PHI4_REASONING_ENDPOINT = os.getenv("PHI4_REASONING_ENDPOINT", "http://localhost:8013/v1")
+LOCAL_OPENAI_API_KEY = os.getenv("LOCAL_OPENAI_API_KEY", "local")
 
 # Model configurations
 MODELS = {
@@ -55,11 +58,23 @@ MODELS = {
         "provider": "nvidia",
         "api_key": NVIDIA_API_KEY,
         "endpoint": "https://integrate.api.nvidia.com/v1/chat/completions"
+    },
+    "microsoft/Phi-4-multimodal-instruct": {
+        "name": "microsoft/Phi-4-multimodal-instruct",
+        "provider": "openai_compatible",
+        "api_key": LOCAL_OPENAI_API_KEY,
+        "endpoint": PHI4_MULTIMODAL_ENDPOINT
+    },
+    "microsoft/phi-4": {
+        "name": "microsoft/phi-4",
+        "provider": "openai_compatible",
+        "api_key": LOCAL_OPENAI_API_KEY,
+        "endpoint": PHI4_REASONING_ENDPOINT
     }
 }
 
 
-def encode_image_to_base64(image_path: str, max_size: Tuple[int, int] = (800, 800)) -> str:
+def encode_image_to_base64(image_path: str, max_size: Tuple[int, int] = (512, 512)) -> str:
     """
     Resize and encode an image file to base64 string.
     
@@ -80,10 +95,14 @@ def encode_image_to_base64(image_path: str, max_size: Tuple[int, int] = (800, 80
         
         # Save to bytes buffer with compression
         buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=85, optimize=True)
+        img.save(buffer, format='JPEG', quality=70, optimize=True)
         buffer.seek(0)
-        
-        return base64.b64encode(buffer.read()).decode('utf-8')
+
+        b64 = base64.b64encode(buffer.read()).decode('utf-8')
+        # Guard against oversized images causing token overflow
+        if len(b64) > 150_000:
+            raise ValueError("Image too large after compression. Please upload a smaller image.")
+        return b64
 
 
 def call_router(messages: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
@@ -169,6 +188,31 @@ def call_model_nvidia(model_config: Dict, messages: List[Dict]) -> Tuple[Optiona
         return None, f"NVIDIA API error: {str(e)}"
 
 
+def call_model_openai_compatible(model_config: Dict, messages: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Call a local or OpenAI-compatible endpoint (e.g., vLLM).
+    
+    Returns:
+        Tuple of (response_text, error_message)
+    """
+    try:
+        client = OpenAI(
+            base_url=model_config["endpoint"],
+            api_key=model_config.get("api_key") or "local"
+        )
+
+        response = client.chat.completions.create(
+            model=model_config["name"],
+            messages=messages,
+            max_tokens=4096
+        )
+
+        return response.choices[0].message.content, None
+
+    except Exception as e:
+        return None, f"OpenAI-compatible API error: {str(e)}"
+
+
 def call_model(model_name: str, messages: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
     """
     Call the specified model with the given messages.
@@ -180,14 +224,16 @@ def call_model(model_name: str, messages: List[Dict]) -> Tuple[Optional[str], Op
         return None, f"Unknown model: {model_name}"
     
     model_config = MODELS[model_name]
-    
-    if not model_config["api_key"]:
+
+    if model_config["provider"] in {"azure_openai", "nvidia"} and not model_config["api_key"]:
         return None, f"API key not configured for {model_name}"
     
     if model_config["provider"] == "azure_openai":
         return call_model_azure_openai(model_config, messages)
     elif model_config["provider"] == "nvidia":
         return call_model_nvidia(model_config, messages)
+    elif model_config["provider"] == "openai_compatible":
+        return call_model_openai_compatible(model_config, messages)
     else:
         return None, f"Unknown provider: {model_config['provider']}"
 
@@ -277,11 +323,15 @@ def chat(message: str, image: Optional[str], history: List[List]) -> Tuple[List[
         # Handle user messages - could be string or dict with image info
         if isinstance(user_content, dict) and "image" in user_content:
             # Reconstruct multimodal message from stored history
-            user_api_msg = format_message_with_image(
-                user_content["text"], 
-                user_content["image"]
-            )
-            messages.append(user_api_msg)
+            try:
+                user_api_msg = format_message_with_image(
+                    user_content["text"],
+                    user_content["image"]
+                )
+                messages.append(user_api_msg)
+            except Exception as e:
+                history.append([user_content, f"❌ {str(e)}"])
+                return history, str(e)
         else:
             # Text-only message
             text = user_content if isinstance(user_content, str) else user_content.get("text", "")
@@ -293,11 +343,16 @@ def chat(message: str, image: Optional[str], history: List[List]) -> Tuple[List[
             messages.append({"role": "assistant", "content": clean_msg})
     
     # Add current message
-    current_message = format_message_with_image(message or "What's in this image?", image)
+    try:
+        current_message = format_message_with_image(message or "What's in this image?", image)
+    except Exception as e:
+        history.append([message or "(image)", f"❌ {str(e)}"])
+        return history, str(e)
     messages.append(current_message)
     
-    # Limit conversation history to most recent 5 exchanges to prevent token overflow
-    messages = limit_conversation_history(messages, max_exchanges=5)
+    # Limit conversation history to prevent token overflow (stricter for multimodal)
+    has_image = any(isinstance(m.get("content"), list) for m in messages)
+    messages = limit_conversation_history(messages, max_exchanges=2 if has_image else 5)
     
     # Step 1: Call router to determine model
     status = "🔍 Routing request..."
@@ -472,6 +527,7 @@ def create_demo():
         }
     """) as demo:
         gr.Markdown("# 🤖 Multimodal LLM Router Demo")
+        gr.Markdown("⚠️ **Model switching notice**: Image requests will switch to the Phi-4 multimodal server, and text requests switch back to Phi-4 reasoning. This can take a few minutes while containers stop/start. For seamless use, consider adding another GB10 to run both models simultaneously.")
         
         chatbot = gr.Chatbot(
             label="Chat",
