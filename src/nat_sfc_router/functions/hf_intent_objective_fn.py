@@ -21,6 +21,7 @@ logging.basicConfig(level=logging.INFO)
 # Remote model configuration
 REMOTE_MODEL_URL = os.getenv("ROUTER_MODEL_URL")
 MODEL_NAME = os.getenv("ROUTER_MODEL_NAME")
+MODEL_REVISION = os.getenv("ROUTER_MODEL_REVISION", "main")
 PHI4_MULTIMODAL_URL = os.getenv("PHI4_MULTIMODAL_URL")
 PHI4_REASONING_URL = os.getenv("PHI4_REASONING_URL", REMOTE_MODEL_URL)
 ENABLE_MODEL_SWITCHING = os.getenv("ENABLE_MODEL_SWITCHING", "true").lower() in {"1", "true", "yes"}
@@ -34,7 +35,11 @@ def _load_tokenizer():
     if tokenizer is None:
         logger.info(f"Loading tokenizer for {MODEL_NAME}...")
         try:
-            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+            tokenizer = AutoTokenizer.from_pretrained(
+                MODEL_NAME,
+                revision=MODEL_REVISION,
+                trust_remote_code=False,
+            )
             logger.info("Tokenizer loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load tokenizer: {e}")

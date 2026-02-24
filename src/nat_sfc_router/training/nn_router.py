@@ -729,7 +729,7 @@ def train_router():
 # ---------- Inference utility ----------
 def load_router(model_path="router_artifacts/nn_router.pth"):
     """Load the trained router model."""
-    checkpoint = torch.load(model_path, map_location=DEVICE)
+    checkpoint = torch.load(model_path, map_location=DEVICE, weights_only=True)
     
     model = RouterNetwork(
         input_dim=checkpoint['input_dim'],
