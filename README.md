@@ -156,7 +156,7 @@ PyTorch override knobs used by this script:
 - `INSTALL_GB10_TORCH=0` to skip script-managed torch install
 - `CONSTRAINTS_FILE` (default: `constraints/gb10-python312.txt`) for pip resolver constraints
 - `PIP_RESOLVE_TIMEOUT_SEC` (default: `900`) to force fast-fail when pip resolver backtracking is excessive
-- `USE_UV=1` to always fallback to `uv sync --python 3.12` if pip resolve fails or times out
+- `USE_UV=1` (default) to always fallback to `uv sync --python 3.12` if pip resolve fails or times out
 - `USE_UV=auto` to fallback to `uv` only when pip times out (`PIP_RESOLVE_TIMEOUT_SEC`), not on immediate resolver conflicts
 - Local dependency guardrail in `pyproject.toml` requires `grpcio>=1.67.1` to prefer wheels on Python 3.12 ARM.
 - The bootstrap script uses `setuptools<81` with `--no-build-isolation` to avoid legacy `grpcio` source-build failures (`pkg_resources` missing) when resolver fallback occurs.
@@ -164,9 +164,9 @@ PyTorch override knobs used by this script:
 
 `USE_UV` mode matrix:
 
-- `USE_UV=0` (default): pip-only; fails on resolver timeout/conflict.
+- `USE_UV=0`: pip-only; fails on resolver timeout/conflict.
 - `USE_UV=auto`: fallback to `uv` only on pip timeout.
-- `USE_UV=1`: fallback to `uv` on pip timeout or immediate resolver conflict.
+- `USE_UV=1` (default): fallback to `uv` on pip timeout or immediate resolver conflict.
 
 Examples:
 

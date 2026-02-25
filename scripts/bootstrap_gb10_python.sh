@@ -5,9 +5,9 @@ set -euo pipefail
 # Override defaults if your host uses a different CUDA/PyTorch build.
 #
 # USE_UV mode quick reference:
-#   USE_UV=0    -> pip-only (default), no uv fallback
+#   USE_UV=0    -> pip-only, no uv fallback
 #   USE_UV=auto -> fallback to uv only when pip times out
-#   USE_UV=1    -> fallback to uv on timeout or resolver conflict
+#   USE_UV=1    -> fallback to uv on timeout or resolver conflict (default)
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -24,7 +24,7 @@ else
 fi
 
 PIP_RESOLVE_TIMEOUT_SEC="${PIP_RESOLVE_TIMEOUT_SEC:-900}"
-USE_UV="${USE_UV:-0}"
+USE_UV="${USE_UV:-1}"
 
 TORCH_VERSION="${TORCH_VERSION:-2.9.1+cu128}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
