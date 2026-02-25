@@ -1,0 +1,13 @@
+# GB10 local Python constraints (Python 3.12, aarch64)
+# Goal: reduce resolver backtracking time and prefer wheel-based paths.
+
+# Keep grpcio on modern wheel-supported releases.
+grpcio>=1.67.1
+
+# Reduce backtracking on large transitive sets.
+mcp==1.26.0
+pymilvus==2.6.9
+uvicorn==0.31.1
+jina==3.34.0
+openai==1.109.1
+langsmith==0.3.45

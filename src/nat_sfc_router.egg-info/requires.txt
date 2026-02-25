@@ -1,5 +1,8 @@
-nvidia-nat==1.2.1
-torch
+nvidia-nat==1.3.1
+langgraph-prebuilt==1.0.5
+langchain-openai==1.1.6
+torch>=2.3
+grpcio>=1.67.1
 transformers==5.0.0rc1
 numpy
 scikit-learn

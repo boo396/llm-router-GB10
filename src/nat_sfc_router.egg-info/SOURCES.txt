@@ -4,6 +4,7 @@
 1_IntentRouter_Example.ipynb
 2_Embedding_NN_Training.ipynb
 3_Embedding_NN_Usage.ipynb
+COOKBOOK.md
 Dockerfile
 LICENSE
 MANIFEST.in
@@ -34,6 +35,8 @@ demo/app.py
 demo/env_template.txt
 demo/requirements.txt
 demo/run.sh
+docker/Dockerfile.vllm-scipy
+scripts/reimage_bootstrap.sh
 scripts/run_local.sh
 src/nat_sfc_router/register.py
 src/nat_sfc_router.egg-info/PKG-INFO
@@ -55,7 +58,6 @@ src/nat_sfc_router/training/generate_embeddings.py
 src/nat_sfc_router/training/model_router.py
 src/nat_sfc_router/training/nn_router.py
 src/nat_sfc_router/training/prepare_hf_data.py
-src/nat_sfc_router/training/requirements.txt
 src/nat_sfc_router/training/router_usage_examples.py
 src/nat_sfc_router/training/router_artifacts/best_hyperparameters.joblib
 src/nat_sfc_router/training/router_artifacts/model_names.joblib
